@@ -459,17 +459,30 @@ function transformedCorners(g) {
 function updateSelection() {
   if (!selected || !selected.isConnected || selected.classList.contains('hidden')) { overlay.style.display='none'; return; }
   overlay.style.display='';
+  const s=stateOf(selected);
+  // The controls live in an unscaled overlay, so size them explicitly with the
+  // object. Keep a small floor so very small items can still be resized.
+  const controlScale=Math.max(.28,Math.sqrt(Math.abs(s.scaleX*s.scaleY)));
+  const handleRadius=7*controlScale;
+  const controlStroke=Math.max(.8,2*controlScale);
   const pts=transformedCorners(selected);
   selectionBox.setAttribute('points',pts.map(p=>`${p.x},${p.y}`).join(' '));
-  document.querySelectorAll('.resize-handle').forEach((h,i)=>{h.setAttribute('cx',pts[i].x);h.setAttribute('cy',pts[i].y);});
+  selectionBox.setAttribute('stroke-width',controlStroke);
+  document.querySelectorAll('.resize-handle').forEach((h,i)=>{
+    h.setAttribute('cx',pts[i].x); h.setAttribute('cy',pts[i].y);
+    h.setAttribute('r',handleRadius); h.setAttribute('stroke-width',controlStroke);
+  });
   const topMid={x:(pts[0].x+pts[1].x)/2,y:(pts[0].y+pts[1].y)/2};
   const center={x:(pts[0].x+pts[2].x)/2,y:(pts[0].y+pts[2].y)/2};
   let vx=topMid.x-center.x, vy=topMid.y-center.y, len=Math.hypot(vx,vy)||1;
   vx/=len; vy/=len;
-  const rh={x:topMid.x+vx*34,y:topMid.y+vy*34};
+  const rh={x:topMid.x+vx*34*controlScale,y:topMid.y+vy*34*controlScale};
+  rotateLine.setAttribute('stroke-width',controlStroke);
   rotateLine.setAttribute('x1',topMid.x); rotateLine.setAttribute('y1',topMid.y);
   rotateLine.setAttribute('x2',rh.x); rotateLine.setAttribute('y2',rh.y);
   rotateHandle.setAttribute('cx',rh.x); rotateHandle.setAttribute('cy',rh.y);
+  rotateHandle.setAttribute('r',8*controlScale);
+  rotateHandle.setAttribute('stroke-width',controlStroke);
 }
 function select(g) {
   if(g?.classList.contains('locked')) { deselect(); return; }
