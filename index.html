@@ -40,7 +40,7 @@ input[type=color] { width:44px; height:38px; padding:2px; border:1px solid #555;
 .stage-wrap { min-width:0; min-height:0; display:grid; place-items:center; padding:52px 20px 20px; background:#101010; position:relative; }
 .stage-content { width:min(100%, 1200px); display:flex; flex-direction:column; gap:12px; }
 .stage { width:100%; aspect-ratio:842.73618/474.0391; background:var(--paper); box-shadow:0 10px 35px #000a; position:relative; overflow:visible; }
-.canvas-export { align-self:flex-end; padding-inline:18px; }
+.canvas-export { position:relative; z-index:20; align-self:flex-end; padding-inline:18px; }
 #canvas { width:100%; height:100%; display:block; overflow:visible; touch-action:none; user-select:none; }
 .drop-hint { position:absolute; inset:28px; border:3px dashed #fff7; display:none; place-items:center; font-size:24px; font-weight:bold; background:#0007; pointer-events:none; z-index:4; }
 .stage-wrap.dragover .drop-hint { display:grid; }
@@ -53,7 +53,56 @@ input[type=color] { width:44px; height:38px; padding:2px; border:1px solid #555;
 .instance.hidden { display:none; }
 .small { color:#999; font-size:12px; }
 kbd { border:1px solid #666; border-bottom-width:2px; border-radius:3px; padding:1px 4px; background:#111; }
-@media (max-width:800px) { body { overflow:auto; } .app { height:auto; min-height:100vh; grid-template-columns:1fr; } .sidebar { border-right:0; border-bottom:2px solid #000; } .stage-wrap { min-height:60vh; } }
+
+/* Tablets and smaller laptops: preserve the editor split while giving the canvas room. */
+@media (max-width:1180px) {
+  .app { grid-template-columns:260px minmax(0,1fr); }
+  .sidebar { padding:12px; }
+  .section { padding-top:11px; margin-top:11px; }
+  .stage-wrap { padding:48px 14px 14px; }
+  .stage-content { width:min(100%,calc((100dvh - 126px) * 1.7778)); }
+  .parts button { height:86px; }
+}
+
+/* Portrait tablets and phones: canvas first, controls below it. */
+@media (max-width:800px) and (orientation:portrait) {
+  body { overflow:auto; }
+  .app { height:auto; min-height:100dvh; grid-template-columns:1fr; }
+  .stage-wrap { order:-1; min-height:0; padding:48px 16px 16px; }
+  .stage-content { width:100%; }
+  .sidebar { overflow:visible; padding:16px; border-right:0; border-top:2px solid #000; }
+  button,.file-label,input[type=text],input[type=number],select { min-height:44px; }
+  input[type=color] { width:48px; height:44px; }
+  .layers { max-height:300px; }
+}
+
+/* Landscape tablets/phones: compact rail plus a height-fitted canvas. */
+@media (max-width:900px) and (orientation:landscape) {
+  body { overflow:hidden; }
+  .app { height:100dvh; grid-template-columns:240px minmax(0,1fr); }
+  .sidebar { overflow:auto; padding:10px; border-right:2px solid #000; border-top:0; }
+  h1 { font-size:18px; }
+  .help { margin-bottom:10px; font-size:12px; }
+  .section { padding-top:9px; margin-top:9px; }
+  .section h2 { margin-bottom:6px; font-size:11px; }
+  .row { gap:6px; margin-bottom:6px; }
+  button,.file-label,input[type=text],input[type=number],select { min-height:38px; padding:7px 8px; }
+  input[type=color] { height:38px; }
+  .stage-wrap { order:initial; min-height:0; padding:46px 12px 10px; }
+  .stage-content { width:min(100%,calc((100dvh - 104px) * 1.7778)); gap:8px; }
+  .canvas-export { min-height:38px; }
+  .parts button { height:76px; }
+  .layers { max-height:160px; }
+}
+
+@media (max-width:520px) and (orientation:portrait) {
+  .stage-wrap { padding:46px 10px 12px; }
+  .sidebar { padding:12px; }
+  .canvas-export { width:100%; }
+  .parts { gap:6px; }
+  .parts button { height:88px; }
+  .layer { grid-template-columns:minmax(0,1fr) auto auto auto; padding:5px; }
+}
 </style>
 </head>
 <body>
@@ -70,6 +119,19 @@ kbd { border:1px solid #666; border-bottom-width:2px; border-radius:3px; padding
     <div class="section">
       <h2>Add image</h2>
       <label class="file-label">Choose or drop images<input id="imageInput" type="file" accept="image/*" multiple></label>
+    </div>
+
+    <div class="section">
+      <h2>Canvas fill</h2>
+      <div class="row">
+        <select id="fillType" aria-label="Fill type">
+          <option value="solid">Solid color</option>
+          <option value="gradient">Gradient</option>
+        </select>
+        <input id="fillColor1" type="color" value="#ffffff" title="First color">
+        <input id="fillColor2" type="color" value="#356777" title="Second color" hidden>
+      </div>
+      <button id="addFillBtn" style="width:100%">Add fill layer</button>
     </div>
 
     <div class="section">
@@ -330,7 +392,7 @@ const partsEl=document.getElementById('parts');
 const layersEl=document.getElementById('layers');
 const source=document.getElementById('sourceSvg').content.querySelector('svg');
 const templates=[];
-let selected=null, action=null, counter=0;
+let selected=null, action=null, counter=0, fillCounter=0;
 
 // Copy reusable definitions (styles and gradients).
 for (const child of [...source.children]) {
@@ -503,6 +565,34 @@ const dropZone=document.getElementById('dropZone');
 for(const type of ['dragenter','dragover'])dropZone.addEventListener(type,e=>{e.preventDefault();dropZone.classList.add('dragover');});
 for(const type of ['dragleave','drop'])dropZone.addEventListener(type,e=>{e.preventDefault();dropZone.classList.remove('dragover');});
 dropZone.addEventListener('drop',e=>{const p=svgPoint(e.clientX,e.clientY);[...e.dataTransfer.files].forEach(f=>addImageFile(f,p));});
+
+const fillType=document.getElementById('fillType');
+const fillColor2=document.getElementById('fillColor2');
+fillType.onchange=()=>{
+  const gradient=fillType.value==='gradient';
+  fillColor2.hidden=!gradient;
+};
+function addFillLayer() {
+  const color1=document.getElementById('fillColor1').value;
+  const content=document.createElementNS(NS,'g');
+  const rect=document.createElementNS(NS,'rect');
+  rect.setAttribute('width','842.73618'); rect.setAttribute('height','474.0391');
+  let label=`Solid fill ${color1}`;
+  if(fillType.value==='gradient') {
+    const color2=fillColor2.value;
+    const id=`canvas-fill-gradient-${++fillCounter}`;
+    const gradient=document.createElementNS(NS,'linearGradient'); gradient.id=id;
+    gradient.setAttribute('x1','0%'); gradient.setAttribute('y1','0%'); gradient.setAttribute('x2','100%'); gradient.setAttribute('y2','100%');
+    for(const [offset,color] of [['0%',color1],['100%',color2]]) {const stop=document.createElementNS(NS,'stop');stop.setAttribute('offset',offset);stop.setAttribute('stop-color',color);gradient.append(stop);}
+    const localDefs=document.createElementNS(NS,'defs'); localDefs.append(gradient); content.append(localDefs);
+    rect.setAttribute('fill',`url(#${id})`); label=`Gradient fill ${color1} → ${color2}`;
+  } else rect.setAttribute('fill',color1);
+  content.append(rect);
+  const layer=addNode(content,label);
+  objects.prepend(layer);
+  refreshLayers(); updateSelection();
+}
+document.getElementById('addFillBtn').onclick=addFillLayer;
 
 function addText() {
   const value=document.getElementById('textInput').value.trim(); if(!value)return;
