@@ -38,7 +38,9 @@ input[type=color] { width:44px; height:38px; padding:2px; border:1px solid #555;
 .layer span { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; cursor:pointer; }
 .layer button { padding:4px 7px; }
 .stage-wrap { min-width:0; min-height:0; display:grid; place-items:center; padding:20px; background:#101010; position:relative; }
-.stage { width:min(100%, 1200px); aspect-ratio:842.73618/474.0391; background:var(--paper); box-shadow:0 10px 35px #000a; position:relative; }
+.stage-content { width:min(100%, 1200px); display:flex; flex-direction:column; gap:12px; }
+.stage { width:100%; aspect-ratio:842.73618/474.0391; background:var(--paper); box-shadow:0 10px 35px #000a; position:relative; }
+.canvas-export { align-self:flex-end; padding-inline:18px; }
 #canvas { width:100%; height:100%; display:block; touch-action:none; user-select:none; }
 .drop-hint { position:absolute; inset:28px; border:3px dashed #fff7; display:none; place-items:center; font-size:24px; font-weight:bold; background:#0007; pointer-events:none; z-index:4; }
 .stage-wrap.dragover .drop-hint { display:grid; }
@@ -122,20 +124,23 @@ kbd { border:1px solid #666; border-bottom-width:2px; border-radius:3px; padding
 
   <main class="stage-wrap" id="dropZone">
     <div class="drop-hint">Drop image here</div>
-    <div class="stage">
-      <svg id="canvas" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 842.73618 474.0391">
-        <defs id="canvasDefs"></defs>
-        <g id="objects"></g>
-        <g id="selectionOverlay">
-          <line id="rotateLine" class="rotate-line" />
-          <polygon id="selectionBox" class="sel-line" />
-          <circle class="handle resize-handle" data-corner="0" r="7" />
-          <circle class="handle resize-handle" data-corner="1" r="7" />
-          <circle class="handle resize-handle" data-corner="2" r="7" />
-          <circle class="handle resize-handle" data-corner="3" r="7" />
-          <circle id="rotateHandle" class="rotate-handle" r="8" />
-        </g>
-      </svg>
+    <div class="stage-content">
+      <div class="stage">
+        <svg id="canvas" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 842.73618 474.0391">
+          <defs id="canvasDefs"></defs>
+          <g id="objects"></g>
+          <g id="selectionOverlay">
+            <line id="rotateLine" class="rotate-line" />
+            <polygon id="selectionBox" class="sel-line" />
+            <circle class="handle resize-handle" data-corner="0" r="7" />
+            <circle class="handle resize-handle" data-corner="1" r="7" />
+            <circle class="handle resize-handle" data-corner="2" r="7" />
+            <circle class="handle resize-handle" data-corner="3" r="7" />
+            <circle id="rotateHandle" class="rotate-handle" r="8" />
+          </g>
+        </svg>
+      </div>
+      <button id="exportPngCanvasBtn" class="primary canvas-export">Export PNG</button>
     </div>
   </main>
 </div>
@@ -528,10 +533,12 @@ function cleanSvgClone() {
 }
 function download(blob,name) {const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
 document.getElementById('exportSvgBtn').onclick=()=>{const xml=new XMLSerializer().serializeToString(cleanSvgClone());download(new Blob([xml],{type:'image/svg+xml'}),'fresh-meme.svg');};
-document.getElementById('exportPngBtn').onclick=()=>{
+const exportPng=()=>{
   const xml=new XMLSerializer().serializeToString(cleanSvgClone()), blob=new Blob([xml],{type:'image/svg+xml'}),url=URL.createObjectURL(blob),im=new Image();
   im.onload=()=>{const c=document.createElement('canvas');c.width=1686;c.height=948;const ctx=c.getContext('2d');ctx.drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(url);c.toBlob(b=>download(b,'fresh-meme.png'),'image/png');};im.src=url;
 };
+document.getElementById('exportPngBtn').onclick=exportPng;
+document.getElementById('exportPngCanvasBtn').onclick=exportPng;
 
 window.addEventListener('resize',updateSelection);
 resetMeme();
