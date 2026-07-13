@@ -714,10 +714,48 @@ async function addImageFile(file,dropPoint=null) {
   const point=dropPoint||{x:421.368,y:237.02};
   addNode(image,file.name.replace(/\.[^.]+$/,''),{tx:point.x,ty:point.y});
 }
+async function addImageUrl(url,dropPoint=null) {
+  if(!url||!/^https?:|^data:image\//i.test(url))return;
+  try {
+    const response=await fetch(url,{mode:'cors'});
+    if(!response.ok)throw new Error(`Image request failed: ${response.status}`);
+    const blob=await response.blob();
+    if(!blob.type.startsWith('image/'))throw new Error('Dropped URL is not an image');
+    const name=new URL(url,location.href).pathname.split('/').pop()||'Dropped image';
+    await addImageFile(new File([blob],name,{type:blob.type}),dropPoint);
+    return;
+  } catch {}
+  const info=await new Promise((ok,no)=>{const im=new Image();im.onload=()=>ok(im);im.onerror=no;im.src=url;}).catch(()=>null);
+  if(!info)return;
+  const maxW=360,maxH=260,ratio=Math.min(1,maxW/info.naturalWidth,maxH/info.naturalHeight);
+  const w=info.naturalWidth*ratio,h=info.naturalHeight*ratio;
+  const image=document.createElementNS(NS,'image');image.setAttribute('href',url);image.setAttribute('width',w);image.setAttribute('height',h);
+  image.setAttribute('x',-w/2);image.setAttribute('y',-h/2);image.setAttribute('preserveAspectRatio','xMidYMid meet');
+  const point=dropPoint||{x:421.368,y:237.02};
+  addNode(image,'Dropped web image',{tx:point.x,ty:point.y});
+}
+function imageUrlsFromDrop(dataTransfer) {
+  const urls=[];
+  const html=dataTransfer.getData('text/html');
+  if(html) {
+    const doc=new DOMParser().parseFromString(html,'text/html');
+    doc.querySelectorAll('img').forEach(img=>urls.push(img.getAttribute('src')||img.currentSrc));
+  }
+  if(!urls.length) {
+    const uri=dataTransfer.getData('text/uri-list').split(/\r?\n/).find(line=>line&&!line.startsWith('#'));
+    const plain=dataTransfer.getData('text/plain').trim();
+    if(uri)urls.push(uri); else if(/^https?:|^data:image\//i.test(plain))urls.push(plain);
+  }
+  return [...new Set(urls.filter(Boolean))];
+}
 document.getElementById('imageInput').addEventListener('change',e=>{[...e.target.files].forEach(f=>addImageFile(f));e.target.value='';});
 for(const type of ['dragenter','dragover'])dropZone.addEventListener(type,e=>{e.preventDefault();dropZone.classList.add('dragover');});
 for(const type of ['dragleave','drop'])dropZone.addEventListener(type,e=>{e.preventDefault();dropZone.classList.remove('dragover');});
-dropZone.addEventListener('drop',e=>{const p=svgPoint(e.clientX,e.clientY);[...e.dataTransfer.files].forEach(f=>addImageFile(f,p));});
+dropZone.addEventListener('drop',e=>{
+  const p=svgPoint(e.clientX,e.clientY),files=[...e.dataTransfer.files].filter(f=>f.type.startsWith('image/'));
+  if(files.length)files.forEach(f=>addImageFile(f,p));
+  else imageUrlsFromDrop(e.dataTransfer).forEach(url=>addImageUrl(url,p));
+});
 
 const fillType=document.getElementById('fillType');
 const fillColor2=document.getElementById('fillColor2');
@@ -775,17 +813,26 @@ window.addEventListener('keydown',e=>{
   if(selected&&['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const n=e.shiftKey?10:1,s=stateOf(selected);if(e.key==='ArrowLeft')s.tx-=n;if(e.key==='ArrowRight')s.tx+=n;if(e.key==='ArrowUp')s.ty-=n;if(e.key==='ArrowDown')s.ty+=n;applyTransform(selected);}
 });
 
-function cleanSvgClone() {
-  const out=canvas.cloneNode(true); out.querySelector('#selectionOverlay')?.remove(); out.querySelector('#brushCursor')?.remove(); out.removeAttribute('style'); out.setAttribute('width','842.73618'); out.setAttribute('height','474.0391');
+function exportBounds() {
+  if(![...objects.children].some(g=>!g.classList.contains('hidden')))return {x:0,y:0,width:842.73618,height:474.0391};
+  let box;
+  try {box=objects.getBBox({fill:true,stroke:true,markers:true});} catch {box=objects.getBBox();}
+  if(!box.width||!box.height)return {x:0,y:0,width:842.73618,height:474.0391};
+  // A fractional margin prevents antialiased edge pixels from being clipped.
+  return {x:box.x-.5,y:box.y-.5,width:box.width+1,height:box.height+1};
+}
+function cleanSvgClone(bounds=exportBounds()) {
+  const out=canvas.cloneNode(true); out.querySelector('#selectionOverlay')?.remove(); out.querySelector('#brushCursor')?.remove(); out.removeAttribute('style');
+  out.setAttribute('viewBox',`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`);out.setAttribute('width',bounds.width);out.setAttribute('height',bounds.height);
   out.querySelector('#objects')?.removeAttribute('mask'); out.querySelector('#editorDefs')?.remove();
   out.querySelectorAll('.hidden').forEach(n=>n.remove()); out.querySelectorAll('.instance').forEach(n=>{n.classList.remove('instance','locked');n.removeAttribute('data-label');n.removeAttribute('data-uid');});
   return out;
 }
 function download(blob,name) {const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
-document.getElementById('exportSvgBtn').onclick=()=>{const xml=new XMLSerializer().serializeToString(cleanSvgClone());download(new Blob([xml],{type:'image/svg+xml'}),'fresh-meme.svg');};
+document.getElementById('exportSvgBtn').onclick=()=>{const bounds=exportBounds(),xml=new XMLSerializer().serializeToString(cleanSvgClone(bounds));download(new Blob([xml],{type:'image/svg+xml'}),'fresh-meme.svg');};
 const exportPng=()=>{
-  const xml=new XMLSerializer().serializeToString(cleanSvgClone()), blob=new Blob([xml],{type:'image/svg+xml'}),url=URL.createObjectURL(blob),im=new Image();
-  im.onload=()=>{const c=document.createElement('canvas');c.width=1686;c.height=948;const ctx=c.getContext('2d');ctx.drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(url);c.toBlob(b=>download(b,'fresh-meme.png'),'image/png');};im.src=url;
+  const bounds=exportBounds(),xml=new XMLSerializer().serializeToString(cleanSvgClone(bounds)),blob=new Blob([xml],{type:'image/svg+xml'}),url=URL.createObjectURL(blob),im=new Image();
+  im.onload=()=>{const c=document.createElement('canvas');c.width=Math.max(1,Math.ceil(bounds.width*2));c.height=Math.max(1,Math.ceil(bounds.height*2));const ctx=c.getContext('2d');ctx.drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(url);c.toBlob(b=>download(b,'fresh-meme.png'),'image/png');};im.src=url;
 };
 document.getElementById('exportPngBtn').onclick=exportPng;
 document.getElementById('exportPngCanvasBtn').onclick=exportPng;
