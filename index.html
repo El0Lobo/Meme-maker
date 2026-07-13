@@ -53,6 +53,10 @@ input[type=range] { width:100%; accent-color:var(--accent); }
 .zoom-controls button { min-width:34px; padding:6px 9px; }
 .zoom-controls output { min-width:52px; text-align:center; font-variant-numeric:tabular-nums; color:#ddd; }
 .canvas-export { position:fixed; z-index:30; right:16px; bottom:16px; padding-inline:18px; box-shadow:0 4px 16px #0008; }
+.floating-tool { position:fixed; z-index:32; top:10px; left:calc(50% + 150px); transform:translateX(-50%); display:flex; align-items:center; gap:9px; padding:7px 8px 7px 12px; border:1px solid #666; border-radius:7px; background:#202020f2; box-shadow:0 4px 18px #000a; }
+.floating-tool[hidden] { display:none; }
+.floating-tool span { font-weight:700; }
+.floating-tool button { padding:6px 10px; background:#711f1f; border-color:#b83a3a; }
 #canvas { width:100%; height:100%; display:block; overflow:visible; touch-action:none; user-select:none; }
 .drop-hint { position:absolute; inset:28px; border:3px dashed #fff7; display:none; place-items:center; font-size:24px; font-weight:bold; background:#0007; pointer-events:none; z-index:4; }
 .stage-wrap.dragover .drop-hint { display:grid; }
@@ -74,6 +78,7 @@ kbd { border:1px solid #666; border-bottom-width:2px; border-radius:3px; padding
   .stage-wrap { padding:48px 14px 14px; }
   .stage-content { width:min(100%,calc((100dvh - 126px) * 1.7778)); }
   .parts button { height:86px; }
+  .floating-tool { left:calc(50% + 130px); }
 }
 
 /* Portrait tablets and phones: canvas first, controls below it. */
@@ -86,6 +91,7 @@ kbd { border:1px solid #666; border-bottom-width:2px; border-radius:3px; padding
   button,.file-label,input[type=text],input[type=number],select { min-height:44px; }
   input[type=color] { width:48px; height:44px; }
   .layers { max-height:300px; }
+  .floating-tool { left:50%; }
 }
 
 /* Landscape tablets/phones: compact rail plus a height-fitted canvas. */
@@ -105,6 +111,7 @@ kbd { border:1px solid #666; border-bottom-width:2px; border-radius:3px; padding
   .canvas-export { min-height:38px; }
   .parts button { height:76px; }
   .layers { max-height:160px; }
+  .floating-tool { left:calc(50% + 120px); }
 }
 
 @media (max-width:520px) and (orientation:portrait) {
@@ -171,7 +178,7 @@ kbd { border:1px solid #666; border-bottom-width:2px; border-radius:3px; padding
         <button id="pipetteBtn" type="button" title="Pick a color from the screen">Pipette</button>
       </div>
       <label class="range-row"><span>Opacity</span><input id="drawOpacity" type="range" min="0" max="100" value="100"><output id="opacityValue">100%</output></label>
-      <label class="range-row"><span>Size</span><input id="drawSize" type="range" min="1" max="60" value="8"><output id="sizeValue">8 px</output></label>
+      <label class="range-row"><span>Size</span><input id="drawSize" type="range" min="1" max="100"value="8"><output id="sizeValue">8 px</output></label>
       <div class="row">
         <button id="drawBtn" class="tool-button" type="button" aria-pressed="false" style="flex:1">Draw</button>
         <button id="undoDoodleBtn" type="button" disabled>Undo stroke</button>
@@ -218,6 +225,10 @@ kbd { border:1px solid #666; border-bottom-width:2px; border-radius:3px; padding
       <output id="zoomValue" aria-live="polite">100%</output>
       <button id="zoomInBtn" type="button" title="Zoom in" aria-label="Zoom in">+</button>
       <button id="zoomResetBtn" type="button" title="Reset zoom">Fit</button>
+    </div>
+    <div id="floatingTool" class="floating-tool" role="status" hidden>
+      <span id="floatingToolLabel">Drawing</span>
+      <button id="stopToolBtn" type="button">Stop drawing</button>
     </div>
     <div class="drop-hint">Drop image here</div>
     <div class="stage-content">
@@ -432,6 +443,7 @@ const zoomValue=document.getElementById('zoomValue');
 const source=document.getElementById('sourceSvg').content.querySelector('svg');
 const templates=[];
 let selected=null, action=null, counter=0, fillCounter=0, canvasZoom=1, fitCanvasWidth=0, drawing=false, activeStroke=null;
+let pipetteController=null;
 const doodleHistory=[];
 
 function measureFitCanvas() {
@@ -602,6 +614,15 @@ const drawSize=document.getElementById('drawSize');
 const opacityValue=document.getElementById('opacityValue');
 const sizeValue=document.getElementById('sizeValue');
 const undoDoodleBtn=document.getElementById('undoDoodleBtn');
+const floatingTool=document.getElementById('floatingTool');
+const floatingToolLabel=document.getElementById('floatingToolLabel');
+const stopToolBtn=document.getElementById('stopToolBtn');
+function showFloatingTool(mode) {
+  if(!mode){floatingTool.hidden=true;return;}
+  const label=mode==='pipette'?'Pipette active':'Drawing active';
+  const stop=mode==='pipette'?'Stop pipette':'Stop drawing';
+  floatingToolLabel.textContent=label;stopToolBtn.textContent=stop;floatingTool.hidden=false;
+}
 function validHex(value) { return /^#[0-9a-f]{6}$/i.test(value); }
 function setDrawColor(value) {
   if(!validHex(value))return;
@@ -626,6 +647,7 @@ function setDrawing(on) {
   drawing=on; drawBtn.classList.toggle('active',on); drawBtn.setAttribute('aria-pressed',String(on));
   drawBtn.textContent=on?'Drawing…':'Draw'; canvas.classList.toggle('drawing',on); if(on)deselect();
   if(!on)brushCursor.style.display='none';
+  showFloatingTool(on?'drawing':null);
 }
 drawBtn.onclick=()=>setDrawing(!drawing);
 function smoothPath(points) {
@@ -648,14 +670,19 @@ undoDoodleBtn.onclick=()=>{
 };
 document.getElementById('pipetteBtn').onclick=async()=>{
   if('EyeDropper' in window) {
-    canvas.classList.add('pipetting');
-    try {const result=await new EyeDropper().open();setDrawColor(result.sRGBHex);} catch {} finally {canvas.classList.remove('pipetting');}
+    canvas.classList.add('pipetting');showFloatingTool('pipette');pipetteController=new AbortController();
+    try {const result=await new EyeDropper().open({signal:pipetteController.signal});setDrawColor(result.sRGBHex);} catch {} finally {canvas.classList.remove('pipetting');pipetteController=null;showFloatingTool(null);}
     return;
   }
   setDrawing(true);
   canvas.classList.add('pipetting');
   drawBtn.textContent='Click canvas to pick';
-  action={type:'pipette'};
+  action={type:'pipette'};showFloatingTool('pipette');
+};
+stopToolBtn.onclick=()=>{
+  pipetteController?.abort();pipetteController=null;
+  if(activeStroke)finishStroke();
+  action=null;canvas.classList.remove('pipetting');setDrawing(false);showFloatingTool(null);
 };
 
 canvas.addEventListener('pointerdown',e=>{
@@ -814,16 +841,28 @@ window.addEventListener('keydown',e=>{
 });
 
 function exportBounds() {
-  if(![...objects.children].some(g=>!g.classList.contains('hidden')))return {x:0,y:0,width:842.73618,height:474.0391};
-  let box;
-  try {box=objects.getBBox({fill:true,stroke:true,markers:true});} catch {box=objects.getBBox();}
+  const visible=[...objects.children].filter(g=>!g.classList.contains('hidden'));
+  if(!visible.length)return {x:0,y:0,width:842.73618,height:474.0391};
+  const box=objects.getBBox();
   if(!box.width||!box.height)return {x:0,y:0,width:842.73618,height:474.0391};
-  // A fractional margin prevents antialiased edge pixels from being clipped.
-  return {x:box.x-.5,y:box.y-.5,width:box.width+1,height:box.height+1};
+  // getBBox() commonly excludes stroke width. Add the largest visible stroke
+  // radius explicitly so thick doodles and their round caps are never clipped.
+  let strokePad=.5;
+  for(const layer of visible) {
+    const s=stateOf(layer),layerScale=Math.max(Math.abs(s?.scaleX||1),Math.abs(s?.scaleY||1));
+    for(const node of layer.querySelectorAll('*')) {
+      const style=getComputedStyle(node),width=parseFloat(style.strokeWidth)||parseFloat(node.getAttribute('stroke-width'))||0;
+      if(style.stroke!=='none'&&width)strokePad=Math.max(strokePad,width*layerScale/2+.75);
+    }
+  }
+  const left=Math.max(0,box.x-strokePad),top=Math.max(0,box.y-strokePad);
+  const right=Math.min(842.73618,box.x+box.width+strokePad),bottom=Math.min(474.0391,box.y+box.height+strokePad);
+  if(right<=left||bottom<=top)return {x:0,y:0,width:842.73618,height:474.0391};
+  return {x:left,y:top,width:right-left,height:bottom-top};
 }
 function cleanSvgClone(bounds=exportBounds()) {
   const out=canvas.cloneNode(true); out.querySelector('#selectionOverlay')?.remove(); out.querySelector('#brushCursor')?.remove(); out.removeAttribute('style');
-  out.setAttribute('viewBox',`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`);out.setAttribute('width',bounds.width);out.setAttribute('height',bounds.height);
+  out.setAttribute('viewBox',`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`);out.setAttribute('width',bounds.width);out.setAttribute('height',bounds.height);out.setAttribute('overflow','hidden');
   out.querySelector('#objects')?.removeAttribute('mask'); out.querySelector('#editorDefs')?.remove();
   out.querySelectorAll('.hidden').forEach(n=>n.remove()); out.querySelectorAll('.instance').forEach(n=>{n.classList.remove('instance','locked');n.removeAttribute('data-label');n.removeAttribute('data-uid');});
   return out;
