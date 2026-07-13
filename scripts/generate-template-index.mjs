@@ -6,6 +6,8 @@ const root = new URL('../static/', import.meta.url);
 const rootPath = fileURLToPath(root);
 const supported = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 const files = (await readdir(root)).filter(name => supported.has(extname(name).toLowerCase()));
+const webOutput = process.env.TEMPLATE_OUTPUT_FORMAT === 'webp';
+const catalogFile = file => webOutput && ['.jpg', '.jpeg', '.png', '.webp'].includes(extname(file).toLowerCase()) ? `${file}.webp` : file;
 
 function displayName(file) {
   return file.slice(0, -extname(file).length).replaceAll('_', ' ').replace(/\s+/g, ' ').trim();
@@ -29,7 +31,7 @@ for (const file of files) {
   const family = familyName(file);
   const key = family.toLocaleLowerCase('en');
   if (!initial.has(key)) initial.set(key, { name: family, variants: [] });
-  initial.get(key).variants.push({ name: displayName(file), file });
+  initial.get(key).variants.push({ name: displayName(file), file: catalogFile(file) });
 }
 
 // Merge close naming variations only when they share a meaningful two-word

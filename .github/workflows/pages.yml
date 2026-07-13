@@ -21,13 +21,50 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
       - name: Set up Pages
         uses: actions/configure-pages@v6
 
-      - name: Prepare site
+      - name: Generate template catalog
+        run: TEMPLATE_OUTPUT_FORMAT=webp node scripts/generate-template-index.mjs
+
+      - name: Install image optimizer
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
+
+      - name: Prepare web-sized site
+        shell: bash
         run: |
-          mkdir _site
+          set -euo pipefail
+          mkdir -p _site/static
           cp index.html _site/
+          cp static/templates.js static/templates.json _site/static/
+          find static -maxdepth 1 -type f \( -iname '*.svg' -o -iname '*.gif' \) -exec cp {} _site/static/ \;
+
+          export SITE_DIR="$PWD/_site"
+          find static -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) -print0 |
+            xargs -0 -P "$(nproc)" -I '{}' bash -c '
+              image="$1"
+              output="$SITE_DIR/$image.webp"
+              mkdir -p "$(dirname "$output")"
+              convert "$image" -auto-orient -resize "1920x1920>" -strip -quality 82 "$output"
+            ' _ '{}'
+
+          touch _site/.nojekyll
+
+      - name: Enforce GitHub Pages size limit
+        shell: bash
+        run: |
+          set -euo pipefail
+          bytes=$(du -sb _site | cut -f1)
+          echo "Published site size: $(du -sh _site | cut -f1)"
+          if (( bytes >= 1000000000 )); then
+            echo "::error::The optimized Pages site is still 1 GB or larger. Reduce image dimensions or quality."
+            exit 1
+          fi
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
