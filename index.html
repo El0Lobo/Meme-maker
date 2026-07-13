@@ -23,6 +23,15 @@ button.danger { background:#191919; border-color:#7b2929; }
 button:disabled { opacity:.4; cursor:not-allowed; }
 input[type=text],input[type=number],select { width:100%; border:1px solid #555; background:#171717; color:#fff; padding:9px; border-radius:4px; }
 input[type=color] { width:44px; height:38px; padding:2px; border:1px solid #555; background:#171717; }
+input[type=range] { width:100%; accent-color:var(--accent); }
+.draw-grid { display:grid; grid-template-columns:44px minmax(0,1fr) auto; gap:8px; align-items:center; }
+.draw-grid input[type=text] { min-width:0; }
+.range-row { display:grid; grid-template-columns:58px minmax(0,1fr) 42px; gap:8px; align-items:center; margin:9px 0; }
+.range-row output { color:#bbb; font-variant-numeric:tabular-nums; text-align:right; }
+.tool-button.active { background:#eee; border-color:#fff; color:#171717; box-shadow:0 0 0 2px var(--accent); }
+#canvas.drawing,#canvas.drawing * { cursor:none !important; }
+#brushCursor { display:none; pointer-events:none; vector-effect:non-scaling-stroke; }
+#canvas.pipetting,#canvas.pipetting * { cursor:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cpath d='m20.8 3.4 7.8 7.8-3.4 3.4-1.6-1.6-9.8 9.8-5.5 1.1 1.1-5.5 9.8-9.8-1.8-1.8z' fill='%23fff' stroke='%23111' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='m8.3 23.9-3 3' stroke='%23fff' stroke-width='4'/%3E%3Cpath d='m8.3 23.9-3 3' stroke='%23111' stroke-width='2'/%3E%3C/svg%3E") 5 27, crosshair !important; }
 .file-label { display:block; width:100%; }
 .file-label input { display:none; }
 .parts { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
@@ -155,6 +164,22 @@ kbd { border:1px solid #666; border-bottom-width:2px; border-radius:3px; padding
     </div>
 
     <div class="section">
+      <h2>Doodle</h2>
+      <div class="draw-grid">
+        <input id="drawColor" type="color" value="#e62f2f" title="Brush color">
+        <input id="drawHex" type="text" value="#E62F2F" maxlength="7" aria-label="Brush hex color" spellcheck="false">
+        <button id="pipetteBtn" type="button" title="Pick a color from the screen">Pipette</button>
+      </div>
+      <label class="range-row"><span>Opacity</span><input id="drawOpacity" type="range" min="0" max="100" value="100"><output id="opacityValue">100%</output></label>
+      <label class="range-row"><span>Size</span><input id="drawSize" type="range" min="1" max="60" value="8"><output id="sizeValue">8 px</output></label>
+      <div class="row">
+        <button id="drawBtn" class="tool-button" type="button" aria-pressed="false" style="flex:1">Draw</button>
+        <button id="undoDoodleBtn" type="button" disabled>Undo stroke</button>
+      </div>
+      <p class="small">Draw directly on the canvas. Strokes are smoothed and remain movable layers.</p>
+    </div>
+
+    <div class="section">
       <h2>Selected object</h2>
       <div class="row">
         <button id="duplicateBtn" disabled>Duplicate</button>
@@ -169,13 +194,13 @@ kbd { border:1px solid #666; border-bottom-width:2px; border-radius:3px; padding
     </div>
 
     <div class="section">
-      <h2>Reusable SVG parts</h2>
-      <div id="parts" class="parts"></div>
+      <h2>Objects on canvas</h2>
+      <div id="layers" class="layers"></div>
     </div>
 
     <div class="section">
-      <h2>Objects on canvas</h2>
-      <div id="layers" class="layers"></div>
+      <h2>Reusable SVG parts</h2>
+      <div id="parts" class="parts"></div>
     </div>
 
     <div class="section">
@@ -215,6 +240,7 @@ kbd { border:1px solid #666; border-bottom-width:2px; border-radius:3px; padding
             <circle class="handle resize-handle" data-corner="3" r="7" />
             <circle id="rotateHandle" class="rotate-handle" r="8" />
           </g>
+          <circle id="brushCursor" cx="0" cy="0" r="4" />
         </svg>
       </div>
       <button id="exportPngCanvasBtn" class="primary canvas-export">Export PNG</button>
@@ -397,6 +423,7 @@ const overlay=document.getElementById('selectionOverlay');
 const selectionBox=document.getElementById('selectionBox');
 const rotateLine=document.getElementById('rotateLine');
 const rotateHandle=document.getElementById('rotateHandle');
+const brushCursor=document.getElementById('brushCursor');
 const partsEl=document.getElementById('parts');
 const layersEl=document.getElementById('layers');
 const stageContent=document.querySelector('.stage-content');
@@ -404,7 +431,8 @@ const dropZone=document.getElementById('dropZone');
 const zoomValue=document.getElementById('zoomValue');
 const source=document.getElementById('sourceSvg').content.querySelector('svg');
 const templates=[];
-let selected=null, action=null, counter=0, fillCounter=0, canvasZoom=1, fitCanvasWidth=0;
+let selected=null, action=null, counter=0, fillCounter=0, canvasZoom=1, fitCanvasWidth=0, drawing=false, activeStroke=null;
+const doodleHistory=[];
 
 function measureFitCanvas() {
   stageContent.style.width='';
@@ -469,11 +497,11 @@ function addNode(node,label,opts={}) {
 }
 function addTemplate(t) { return addNode(t.node,t.label); }
 function resetMeme() {
-  objects.replaceChildren(); selected=null; counter=0;
+  objects.replaceChildren(); selected=null; counter=0; doodleHistory.length=0; undoDoodleBtn && (undoDoodleBtn.disabled=true);
   for (const t of templates) addNode(t.node,t.label);
   deselect(); refreshLayers();
 }
-function clearCanvas() { objects.replaceChildren(); deselect(); refreshLayers(); }
+function clearCanvas() { objects.replaceChildren(); doodleHistory.length=0; undoDoodleBtn && (undoDoodleBtn.disabled=true); deselect(); refreshLayers(); }
 
 function transformedCorners(g) {
   const b=stateOf(g).box;
@@ -566,8 +594,84 @@ for (const t of templates) {
   document.fonts?.ready.then(fitPreview);
 }
 
+const drawBtn=document.getElementById('drawBtn');
+const drawColor=document.getElementById('drawColor');
+const drawHex=document.getElementById('drawHex');
+const drawOpacity=document.getElementById('drawOpacity');
+const drawSize=document.getElementById('drawSize');
+const opacityValue=document.getElementById('opacityValue');
+const sizeValue=document.getElementById('sizeValue');
+const undoDoodleBtn=document.getElementById('undoDoodleBtn');
+function validHex(value) { return /^#[0-9a-f]{6}$/i.test(value); }
+function setDrawColor(value) {
+  if(!validHex(value))return;
+  drawColor.value=value; drawHex.value=value.toUpperCase();
+  updateBrushAppearance();
+}
+drawColor.oninput=()=>setDrawColor(drawColor.value);
+drawHex.addEventListener('input',()=>{if(validHex(drawHex.value))setDrawColor(drawHex.value);});
+drawHex.addEventListener('blur',()=>{if(!validHex(drawHex.value))drawHex.value=drawColor.value.toUpperCase();});
+drawOpacity.oninput=()=>opacityValue.value=`${drawOpacity.value}%`;
+drawOpacity.addEventListener('input',()=>updateBrushAppearance());
+drawSize.oninput=()=>{sizeValue.value=`${drawSize.value} px`;updateBrushAppearance();};
+function updateBrushAppearance() {
+  brushCursor.setAttribute('r',drawSize.value/2);
+  brushCursor.setAttribute('fill',drawColor.value);
+  brushCursor.setAttribute('fill-opacity',drawOpacity.value/100);
+  brushCursor.setAttribute('stroke',drawColor.value.toLowerCase()==='#ffffff'?'#111':'#fff');
+  brushCursor.setAttribute('stroke-opacity','.8');
+  brushCursor.setAttribute('stroke-width','1');
+}
+function setDrawing(on) {
+  drawing=on; drawBtn.classList.toggle('active',on); drawBtn.setAttribute('aria-pressed',String(on));
+  drawBtn.textContent=on?'Drawing…':'Draw'; canvas.classList.toggle('drawing',on); if(on)deselect();
+  if(!on)brushCursor.style.display='none';
+}
+drawBtn.onclick=()=>setDrawing(!drawing);
+function smoothPath(points) {
+  if(points.length<2)return '';
+  if(points.length===2)return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+  let d=`M ${points[0].x} ${points[0].y}`;
+  for(let i=1;i<points.length-1;i++)d+=` Q ${points[i].x} ${points[i].y} ${(points[i].x+points[i+1].x)/2} ${(points[i].y+points[i+1].y)/2}`;
+  const last=points.at(-1); return `${d} L ${last.x} ${last.y}`;
+}
+function finishStroke() {
+  if(!activeStroke)return;
+  const {path,points}=activeStroke; activeStroke=null;
+  if(points.length<2) { path.remove(); return; }
+  const layer=addNode(path,'Doodle'); path.remove(); doodleHistory.push(layer); undoDoodleBtn.disabled=false;
+}
+undoDoodleBtn.onclick=()=>{
+  let layer; do {layer=doodleHistory.pop();} while(layer&&!layer.isConnected);
+  if(layer){if(selected===layer)deselect();layer.remove();refreshLayers();}
+  undoDoodleBtn.disabled=!doodleHistory.some(g=>g.isConnected);
+};
+document.getElementById('pipetteBtn').onclick=async()=>{
+  if('EyeDropper' in window) {
+    canvas.classList.add('pipetting');
+    try {const result=await new EyeDropper().open();setDrawColor(result.sRGBHex);} catch {} finally {canvas.classList.remove('pipetting');}
+    return;
+  }
+  setDrawing(true);
+  canvas.classList.add('pipetting');
+  drawBtn.textContent='Click canvas to pick';
+  action={type:'pipette'};
+};
+
 canvas.addEventListener('pointerdown',e=>{
   if(e.button!==0)return;
+  if(action?.type==='pipette') {
+    e.preventDefault();
+    const point=svgPoint(e.clientX,e.clientY), xml=new XMLSerializer().serializeToString(cleanSvgClone());
+    const url=URL.createObjectURL(new Blob([xml],{type:'image/svg+xml'})), image=new Image();
+    image.onload=()=>{const c=document.createElement('canvas');c.width=843;c.height=474;const ctx=c.getContext('2d');ctx.drawImage(image,0,0,c.width,c.height);const pixel=ctx.getImageData(Math.max(0,Math.min(842,Math.round(point.x))),Math.max(0,Math.min(473,Math.round(point.y))),1,1).data;setDrawColor(`#${[pixel[0],pixel[1],pixel[2]].map(v=>v.toString(16).padStart(2,'0')).join('')}`);URL.revokeObjectURL(url);canvas.classList.remove('pipetting');setDrawing(false);action=null;};image.src=url;
+    return;
+  }
+  if(drawing) {
+    e.preventDefault(); const p=svgPoint(e.clientX,e.clientY), path=document.createElementNS(NS,'path');
+    path.setAttribute('fill','none');path.setAttribute('stroke',drawColor.value);path.setAttribute('stroke-opacity',drawOpacity.value/100);path.setAttribute('stroke-width',drawSize.value);path.setAttribute('stroke-linecap','round');path.setAttribute('stroke-linejoin','round');path.setAttribute('pointer-events','none');
+    path.setAttribute('d',`M ${p.x} ${p.y}`);objects.append(path);activeStroke={path,points:[p]};canvas.setPointerCapture(e.pointerId);return;
+  }
   const resize=e.target.closest('.resize-handle');
   if(resize && selected) {
     e.preventDefault(); const p=svgPoint(e.clientX,e.clientY); const pts=transformedCorners(selected);
@@ -586,6 +690,8 @@ canvas.addEventListener('pointerdown',e=>{
   } else deselect();
 });
 canvas.addEventListener('pointermove',e=>{
+  if(drawing&&action?.type!=='pipette') {const cursorPoint=svgPoint(e.clientX,e.clientY);brushCursor.setAttribute('cx',cursorPoint.x);brushCursor.setAttribute('cy',cursorPoint.y);brushCursor.style.display='block';}
+  if(activeStroke){const p=svgPoint(e.clientX,e.clientY),last=activeStroke.points.at(-1);if(Math.hypot(p.x-last.x,p.y-last.y)>=1.5){activeStroke.points.push(p);activeStroke.path.setAttribute('d',smoothPath(activeStroke.points));}return;}
   if(!action||!selected)return;
   const p=svgPoint(e.clientX,e.clientY), s=stateOf(selected);
   if(action.type==='move') {s.tx=action.tx+p.x-action.start.x;s.ty=action.ty+p.y-action.start.y;}
@@ -593,7 +699,9 @@ canvas.addEventListener('pointermove',e=>{
   else if(action.type==='rotate') {s.rotation=action.rotation+(Math.atan2(p.y-action.center.y,p.x-action.center.x)-action.startAngle)*180/Math.PI;}
   applyTransform(selected);
 });
-canvas.addEventListener('pointerup',()=>action=null); canvas.addEventListener('pointercancel',()=>action=null);
+canvas.addEventListener('pointerup',()=>{if(activeStroke)finishStroke();else if(action?.type!=='pipette')action=null;}); canvas.addEventListener('pointercancel',()=>{if(activeStroke)finishStroke();else action=null;});
+canvas.addEventListener('pointerleave',()=>{if(!activeStroke)brushCursor.style.display='none';});
+canvas.addEventListener('pointerenter',()=>{if(drawing&&action?.type!=='pipette')brushCursor.style.display='block';});
 
 async function addImageFile(file,dropPoint=null) {
   if(!file.type.startsWith('image/'))return;
@@ -668,7 +776,7 @@ window.addEventListener('keydown',e=>{
 });
 
 function cleanSvgClone() {
-  const out=canvas.cloneNode(true); out.querySelector('#selectionOverlay')?.remove(); out.removeAttribute('style'); out.setAttribute('width','842.73618'); out.setAttribute('height','474.0391');
+  const out=canvas.cloneNode(true); out.querySelector('#selectionOverlay')?.remove(); out.querySelector('#brushCursor')?.remove(); out.removeAttribute('style'); out.setAttribute('width','842.73618'); out.setAttribute('height','474.0391');
   out.querySelector('#objects')?.removeAttribute('mask'); out.querySelector('#editorDefs')?.remove();
   out.querySelectorAll('.hidden').forEach(n=>n.remove()); out.querySelectorAll('.instance').forEach(n=>{n.classList.remove('instance','locked');n.removeAttribute('data-label');n.removeAttribute('data-uid');});
   return out;
@@ -683,6 +791,7 @@ document.getElementById('exportPngBtn').onclick=exportPng;
 document.getElementById('exportPngCanvasBtn').onclick=exportPng;
 
 window.addEventListener('resize',()=>setCanvasZoom(canvasZoom,true));
+updateBrushAppearance();
 setCanvasZoom(1,true);
 resetMeme();
 })();
